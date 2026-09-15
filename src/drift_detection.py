@@ -20,36 +20,68 @@ def population_stability_index(reference: pd.Series, current: pd.Series, n_bins:
     PSI = Σ (p_cur - p_ref) * ln(p_cur / p_ref), bornes des bins = quantiles de
     la référence. ⚠️ pensez au lissage anti-zéro (sinon ln(0) / division par 0).
     """
-    # TODO 1 — calculer les bords de bins (quantiles de `reference`),
-    #   les comptages par bin pour ref et cur, les proportions (+ epsilon),
-    #   puis la somme PSI.
-    raise NotImplementedError
+    ref = reference.dropna()
+    cur = current.dropna()
+    edges = np.unique(np.quantile(ref, np.linspace(0, 1, n_bins + 1)))
+    edges[0], edges[-1] = -np.inf, np.inf
+    p_ref = np.histogram(ref, edges)[0] / len(ref)
+    p_cur = np.histogram(cur, edges)[0] / len(cur)
+    p_ref, p_cur = p_ref + 1e-6, p_cur + 1e-6
+    p_ref, p_cur = p_ref / p_ref.sum(), p_cur / p_cur.sum()
+    return float(np.sum((p_cur - p_ref) * np.log(p_cur / p_ref)))
 
 
 def psi_verdict(psi: float) -> str:
     """Traduit un PSI en verdict (stable / suspect / dérive)."""
-    # TODO 2 — utiliser PSI_STABLE et PSI_DRIFT.
-    raise NotImplementedError
+    if psi <= PSI_STABLE:
+        return "stable"
+    elif psi <= PSI_DRIFT:
+        return "suspect"
+    else:
+        return "dérive"
 
 
 def ks_pvalue(reference: pd.Series, current: pd.Series) -> float:
     """p-value du test de Kolmogorov-Smirnov (2 échantillons)."""
-    # TODO 3 — ks_2samp(...).pvalue
-    raise NotImplementedError
+    return ks_2samp(reference.dropna(), current.dropna()).pvalue
+
 
 
 def chi2_pvalue(reference: pd.Series, current: pd.Series) -> float:
     """p-value du Chi² sur les fréquences de modalités (aligner les modalités)."""
-    # TODO 4 — construire la table de contingence (réindexer sur l'union des
-    #   modalités, lissage +1) puis chi2_contingency(table)[1].
-    raise NotImplementedError
-
+    ref_counts = reference.value_counts()
+    cur_counts = current.value_counts()
+    modalites = ref_counts.index.union(cur_counts.index)
+    ref_counts = ref_counts.reindex(modalites, fill_value=0) + 1
+    cur_counts = cur_counts.reindex(modalites, fill_value=0) + 1
+    table = np.array([ref_counts, cur_counts])
+    return float(chi2_contingency(table)[1])
 
 def drift_report(
     reference: pd.DataFrame, current: pd.DataFrame,
     numeric_cols: list[str], categorical_cols: list[str],
 ) -> pd.DataFrame:
     """Tableau de synthèse : feature / type / psi / ks_pvalue / chi2_pvalue / verdict."""
-    # TODO 5 — boucler sur numeric_cols (PSI + KS) et categorical_cols (Chi²),
-    #   construire un DataFrame trié par sévérité.
-    raise NotImplementedError
+    numeriques = []
+    for col in numeric_cols:
+        psi = population_stability_index(reference[col], current[col])
+        numeriques.append({
+            "feature": col, "type": "numérique", "psi": psi,
+            "ks_pvalue": ks_pvalue(reference[col], current[col]),
+            "chi2_pvalue": None, "verdict": psi_verdict(psi),
+        })
+
+    categorielles = []
+    for col in categorical_cols:
+        p = chi2_pvalue(reference[col], current[col])
+        categorielles.append({
+            "feature": col, "type": "catégorielle", "psi": None,
+            "ks_pvalue": None, "chi2_pvalue": p,
+            "verdict": "dérive" if p < 0.05 else "stable",
+        })
+    return (pd.DataFrame(numeriques + categorielles)
+            .sort_values(["psi", "chi2_pvalue"], ascending=[False,True], na_position="last")
+            .reset_index(drop=True))
+
+
+
