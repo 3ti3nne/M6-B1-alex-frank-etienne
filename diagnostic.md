@@ -2,7 +2,7 @@
 
 - **Référence** : `data/reference_set.csv` (1500 lignes)
 - **Production** : `data/prod_3months.csv` + `data/predictions_log.csv` (3000 lignes, du 02/03 au 24/05/2026)
-- **Détail des calculs** : `drift_summary.md` et `notebooks/M6-B1_template.ipynb`
+- **Détail des calculs** : `drift_summary.md` et `notebooks/M6_B1_alex_franck_etienne.ipynb`
 
 ## 1. Les 4 axes
 

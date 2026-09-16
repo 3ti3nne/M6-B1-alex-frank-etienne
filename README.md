@@ -1,153 +1,192 @@
-# M6-B1 — Analyser la performance et détecter la dérive (Pyrenex, 3 mois post-prod)
+# M6-B1 — Analyse de performance et détection de dérive Pyrenex
 
-> **Repo template GitHub.** Un·e du binôme clique **« Use this template »** →
-> `M6-B1-pyrenex-drift-<binome>`, ajoute l'autre en collaborateur. Vous
-> diagnostiquez la dérive du modèle déployé en M5 et rendez une note à Sophie Léger.
+Analyse du modèle de scoring crédit `pyrenex_risk_v2` après trois mois de production.
+Le projet compare les données de référence aux dossiers reçus entre mars et mai 2026,
+mesure l'évolution des performances et propose une action à Sophie Léger, côté Pyrenex.
 
----
+L'objectif est de comprendre si les changements viennent des dossiers entrants, d'une
+perte de capacité du modèle à distinguer les risques ou de probabilités devenues moins
+fiables. Le dépôt regroupe le notebook d'analyse, les fonctions de calcul et les documents
+de synthèse qui justifient la recommandation client.
 
-## 🧭 Votre brief en un coup d'œil
+## Données
 
-**Ce README est votre document de pilotage unique** — tout ce qu'il faut faire,
-dans l'ordre, avec le bon appui. Les autres supports ont chacun un rôle précis :
+Les trois CSV nécessaires à l'analyse sont fournis dans le dépôt.
 
-| Support | Rôle |
+| Fichier | Volume | Contenu |
+|---|---:|---|
+| [`data/reference_set.csv`](./data/reference_set.csv) | 1 500 lignes | Jeu témoin pour mesurer la dérive |
+| [`data/prod_3months.csv`](./data/prod_3months.csv) | 3 000 lignes | Dossiers de production du 2 mars au 24 mai 2026 |
+| [`data/predictions_log.csv`](./data/predictions_log.csv) | 3 000 lignes | Dates, prédictions, probabilités de défaut et labels réels |
+
+L'analyse porte sur 14 variables explicatives : 8 numériques et 6 catégorielles.
+La cible `loan_status` est exclue de la comparaison des variables d'entrée.
+Le jeu de référence de 1 500 lignes est propre à cette analyse M6 : il ne doit pas être
+remplacé par le jeu d'évaluation de 500 lignes du projet M5.
+
+## Analyse
+
+Le [`notebook M6_B1_alex_franck_etienne.ipynb`](./notebooks/M6_B1_alex_franck_etienne.ipynb)
+constitue le fil conducteur : il charge les CSV, appelle les fonctions de `src/` et
+présente les tableaux, graphiques et interprétations. L'analyse suit cinq étapes,
+de l'exploration des données à la recommandation.
+
+### 1. Explorer les données
+
+La première section du notebook compare le jeu de référence aux trois mois de production.
+Les 8 variables numériques sont décrites par des statistiques et des histogrammes avec
+les mêmes bornes de classes. Les histogrammes sont normalisés pour comparer les formes
+malgré les volumes différents des deux jeux. Les 6 variables catégorielles sont comparées
+en proportions.
+
+Cette exploration sert à repérer les distributions qui changent avant de leur appliquer
+des tests. Les graphiques et leur lecture sont conservés dans le notebook : ils font
+ressortir notamment les taux d'intérêt, l'utilisation du crédit renouvelable et les grades.
+
+### 2. Mesurer la dérive
+
+[`src/drift_detection.py`](./src/drift_detection.py) rassemble les méthodes utilisées
+pour vérifier ces premiers constats. Le PSI mesure l'ampleur du déplacement des variables
+numériques, avec des classes définies à partir des quantiles de la référence. Le test KS
+complète cette mesure ; le Chi² compare les fréquences des catégories.
+
+La fonction `drift_report` applique ces calculs aux 14 variables et produit un tableau
+avec les scores, les p-values et les verdicts. Les repères du PSI sont 0,10 et 0,25 ;
+le seuil statistique retenu est de 5 %. Croiser ces mesures permet de distinguer un écart
+statistiquement détectable d'un changement de distribution important.
+Le rapport par variable est repris dans [`drift_summary.md`](./drift_summary.md).
+
+### 3. Vérifier la calibration
+
+La troisième section exploite les probabilités et les labels réels de
+[`predictions_log.csv`](./data/predictions_log.csv). Elle compare les semaines 1–4 aux
+semaines 9–12 pour vérifier si les risques annoncés correspondent encore aux défauts observés.
+
+Dans [`src/calibration.py`](./src/calibration.py), `reliability_table` regroupe les
+probabilités en 10 tranches et calcule, pour chacune, l'effectif, le risque moyen annoncé
+et le taux de défaut réel. Le notebook trace les diagrammes correspondants ;
+`expected_calibration_error` résume les écarts absolus en les pondérant par les effectifs.
+Le même découpage est utilisé sur les deux périodes pour comparer leur calibration.
+
+### 4. Suivre l'évolution dans le temps
+
+La quatrième section du notebook calcule chaque semaine l'AUC, le F1 macro et les parts
+de défauts prédits et observés. L'AUC décrit la capacité à classer les dossiers par risque,
+tandis que le F1 renseigne sur les classes effectivement prédites. Leur comparaison aide
+à comprendre ce qui se dégrade dans le comportement du modèle.
+
+L'analyse est complétée par un PSI calculé par fenêtres de deux semaines pour `int_rate`,
+`revol_util` et `annual_inc`, à l'aide de `population_stability_index` dans
+[`src/drift_detection.py`](./src/drift_detection.py). Les courbes permettent de dater
+l'apparition des écarts et de voir si la dérive est progressive ou brutale, ce que le
+score global sur trois mois ne montre pas.
+
+### 5. Construire le diagnostic et recommander une action
+
+[`diagnostic.md`](./diagnostic.md) croise les quatre axes : variables, AUC, calibration
+et temporalité. Il rassemble les preuves, les hypothèses retenues ou écartées et les
+informations qui manquent pour confirmer l'interprétation.
+
+[`src/recommendations.py`](./src/recommendations.py) formalise cette orientation avec
+`DriftDiagnosis`, `diagnose_drift_type` et `recommend`. Le nombre de variables en dérive,
+la stabilité de l'AUC, la dégradation de calibration et la baisse du F1 servent à proposer
+une action et un niveau d'urgence. Cette règle aide à construire le diagnostic ; elle
+ne prouve pas à elle seule le type de dérive.
+
+La [`note_recommandation.md`](./note_recommandation.md) présente ensuite au client le
+constat, ses conséquences, l'action proposée et son coût estimé, dans un langage accessible.
+
+## Résultats
+
+| Indicateur | Semaines 1–4 | Semaines 9–12 |
+|---|---:|---:|
+| ROC-AUC | 0,742 | 0,746 |
+| F1 macro | 0,609 | 0,551 |
+| Risque prédit moyen | 44,27 % | 51,58 % |
+| Défauts observés | 20,24 % | 20,06 % |
+| Erreur de calibration ECE | 24,03 points | 31,52 points |
+
+La dérive touche surtout `int_rate` (PSI 0,444), puis `revol_util` et `grade`.
+L'AUC reste stable, mais le modèle surestime davantage le risque : le diagnostic retenu
+est une **dérive des données avec dégradation de la calibration**.
+La note propose un réentraînement sur les données récentes et un suivi renforcé,
+pour **2 jours-homme estimés**. Ce réentraînement n'est pas réalisé dans ce dépôt.
+
+## Monitoring Grafana
+
+Le monitoring a été réalisé dans le dépôt
+[M6-B2 — alex-franck-etienne](https://github.com/franckcwalter/m6-b2-alex-franck-etienne),
+qui prolonge ce travail d'analyse. Dans ce dépôt M6-B1, le fichier
+[`pyrenex_drift_TEMPLATE.json`](./grafana/provisioning/dashboards/pyrenex_drift_TEMPLATE.json)
+fournit trois panels fondés sur les métriques Prometheus du projet M5 :
+
+| Panel | Utilité |
 |---|---|
-| **Simplonline** | Le contrat : contexte client, livrables, critères de performance |
-| **Ce README** | Le pilotage : quoi faire, quand, avec quel mini-cours |
-| [`ressources/`](./ressources/) | Les 5 mini-cours d'appui (index dans [`ressources/README.md`](./ressources/README.md)) |
-| **Discord `fil-M6`** | Annonces + questions |
+| Probabilités prédites : médiane et p90 | Suivre le déplacement des risques annoncés |
+| Part des dossiers prédits en défaut | Repérer un changement dans les décisions du modèle |
+| Volume et erreurs HTTP | Interpréter les signaux avec leur contexte de trafic |
 
-### Les 2 jours sync (binôme)
+Le fichier conservé ici est le template de départ. L’intégration du monitoring et la
+stack associée sont à consulter dans le dépôt M6-B2 lié ci-dessus.
 
-| Quand | Tâche | Durée | Appui |
-|---|---|---|---|
-| Mardi 9h15 | 1. Tirage binôme + harmonisation de la reprise M5 | 30 min | — |
-| Mardi 9h45 | 2. Exploration des données prod (référence vs 3 mois) | 1h15 | — |
-| Mardi 11h00 | 3. Détection statistique PSI / KS / Chi² + `drift_summary.md` | 1h30 | [`01_PSI_KS_Chi2`](./ressources/01_PSI_KS_Chi2_essentiel.md) |
-| Mardi 12h30 | 4. 🍽️ Déjeuner | 1h | — |
-| Mardi 13h30 | 5. Calibration : reliability diagram (ECE en bonus ⭐) | 1h | [`03_Calibration_modele`](./ressources/03_Calibration_modele_essentiel.md) |
-| Mardi 14h30 | 6. Diagnostic data drift vs concept drift → `diagnostic.md` | 1h30 | [`02_Data_drift_vs_concept_drift`](./ressources/02_Data_drift_vs_concept_drift_essentiel.md) |
-| Mardi 16h45 | 7. Mur réflexif intermédiaire | 15 min | — |
-| Mercredi 9h15 | 8. Extension du dashboard Grafana M5 (3 panels **live**) | 45 min | [`05_Grafana_extension_dashboard`](./ressources/05_Grafana_extension_dashboard_essentiel.md) |
-| Mercredi 10h00 | 9. Note de recommandation client | 1h15 | [`04_Note_recommandation_client`](./ressources/04_Note_recommandation_client_essentiel.md) |
-| Mercredi 11h30 | 10. **Tour de table binômes** — diagnostics comparés | 1h | — |
-| Mercredi 12h30 | 11. Mur réflexif final M6-B1 | 30 min | — |
+PSI, KS et Chi² restent dans le notebook : ils comparent des lots de données à une
+référence et ne sont pas exposés par les métriques live fournies. Le F1 sur les 12 semaines
+reste aussi une mesure batch, car il nécessite les labels réels, disponibles avec retard
+en production.
 
-### ✅ Checklist livrables (avant mercredi 12h30)
+## Reproduire l'analyse
 
-- [ ] `src/drift_detection.py` + `src/calibration.py` complétés — `pytest -q` vert
-- [ ] PSI / KS / Chi² sur **toutes** les features pertinentes → `drift_summary.md`
-- [ ] Diagnostic **chiffré et tranché** dans `diagnostic.md` (data vs concept
-      drift — croisez features, AUC, calibration, temporalité)
-- [ ] Note de recommandation **lisible par Sophie Léger** (pas ML), chiffrée,
-      décision tranchée
-- [ ] Dashboard M5 **étendu et provisionné** dans `grafana/provisioning/dashboards/` (**le seul dossier monté** par votre compose M5), pas de dashboard neuf, **aucun panel « No data »**
-- [ ] 2 lignes de README : pourquoi PSI, KS, Chi² et F1-12-semaines restent dans le **notebook** (mesures batch) et pas dans Grafana
-- [ ] Notebook exécuté top→bottom, commits `Co-authored-by:`, **journal de bord**
+Prérequis : Python 3.11 ou supérieur, avec une version compatible avec les dépendances
+figées dans `requirements.txt`.
 
-## 🗺️ Deux dépôts, et rien à fusionner
-
-La question qui revient toujours : *« comment je répartis entre ce squelette et mon
-code de M5-B2 ? »* Réponse : **on ne répartit pas.** Deux dépôts vivent côte à côte,
-**un seul fichier voyage**, et il va de M6 vers M5 — jamais l'inverse.
-
-```mermaid
-flowchart LR
-  subgraph NEUF["🆕 Ce repo M6-B1"]
-    direction TB
-    N1["<b>data/</b> — les 3 CSV sont fournis<br/>reference_set.csv <b>1500 lignes = le témoin</b><br/>prod_3months.csv · predictions_log.csv"]
-    N2["<b>src/</b><br/>drift_detection.py · calibration.py"]
-    N3["<b>notebooks/</b><br/>M6-B1_template.ipynb"]
-    N4["diagnostic.md<br/>note_recommandation.md"]
-    N5["grafana/provisioning/dashboards/<br/>pyrenex_drift.json"]
-    N1 --> N3
-    N2 --> N3
-    N3 --> N4
-    N3 --> N5
-  end
-
-  subgraph M5REPO["📦 Votre repo M5 — intact le jour 1"]
-    direction TB
-    M1["stack 3 services<br/>Prometheus + Grafana"]
-    M2["data/reference_set.csv <b>500 lignes</b><br/>+ vos seuils M5-B2"]
-    M3["scripts/evaluate_model.py"]
-  end
-
-  BOUCLE(["🔁 Boucle de rétroaction<br/><b>brief M6-B2</b>"])
-
-  N5 ==>|"JOUR 2 — copier ce fichier"| M1
-  M2 -.->|"EN B2"| BOUCLE
-  M3 -.->|"EN B2"| BOUCLE
-
-  STOP["⛔ On ne copie RIEN de M5 vers ce repo<br/>surtout pas le reference_set de 500 lignes :<br/>il écraserait le témoin de dérive"]
-  STOP -.- NEUF
-
-  classDef neuf fill:#eef2ff,stroke:#4f46e5,stroke-width:2px,color:#1f2933
-  classDef ancien fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#1f2933
-  classDef futur fill:#fff7ed,stroke:#f59e0b,stroke-width:2px,color:#1f2933
-  classDef stop fill:#fef2f2,stroke:#dc2626,stroke-width:2px,color:#991b1b
-  class N1,N2,N3,N4,N5 neuf
-  class M1,M2,M3 ancien
-  class BOUCLE futur
-  class STOP stop
-```
-
-Concrètement :
-
-- **Jour 1** — vous travaillez à 100 % dans ce repo. Les données y sont, `pytest -q tests`
-  est vert dès le clone : personne n'est bloqué par un Docker cassé ou un repo M5 froid.
-- **Jour 2** — vous rouvrez votre repo M5 pour y **copier un seul fichier**, le JSON du
-  dashboard, dans `grafana/provisioning/dashboards/`.
-- **En B2** — votre jeu de 500 lignes, vos seuils et votre `evaluate_model.py` reprennent
-  du service. Ils attendent où ils sont, vous n'y touchez pas avant.
-- **La tâche 1 ne déplace aucun fichier.** Elle demande une décision **écrite dans ce
-  README** : lequel de vos deux jeux M5-B2 servira à la boucle de B2, et pourquoi.
-
----
-
-## 🚀 Démarrage
+Depuis la racine du dépôt :
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pytest -q tests            # vert dès le clone (certains tests se débloquent avec vos TODO)
-jupyter notebook notebooks/M6-B1_template.ipynb
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m pytest -q tests
+jupyter notebook notebooks/M6_B1_alex_franck_etienne.ipynb
 ```
 
-> Variante `uv` : `uv venv .venv && source .venv/bin/activate` puis
-> `uv pip install -r requirements.txt`.
-> Dépannage : `No module named pip` → vous êtes dans un venv créé par `uv`,
-> utilisez `uv pip install …` (pas `pip install`).
+Dans Jupyter, sélectionner l'environnement installé puis exécuter toutes les cellules
+dans l'ordre, avec le dossier `notebooks/` comme répertoire de travail : certaines
+cellules utilisent les chemins relatifs `../data/`.
 
-Les **données sont fournies** dans `data/` : `reference_set.csv` (baseline),
-`prod_3months.csv` (3 mois de prod), `predictions_log.csv` (logs du modèle).
+Pour un environnement créé avec `uv`, utiliser `uv pip install -r requirements.txt`
+à la place de la commande d'installation avec pip.
 
-## 🧭 Ce que vous construisez
+[`tests/test_smoke.py`](./tests/test_smoke.py) vérifie la présence et la cohérence
+des données, les propriétés de base du PSI et un cas de diagnostic.
+[`tests/test_calibration.py`](./tests/test_calibration.py) couvre les bornes des
+probabilités, la pondération de l'ECE, les valeurs manquantes et les entrées invalides.
 
-| # | À faire | Fichier | Mini-cours |
-|---|---|---|---|
-| 1 | Détection PSI / KS / Chi² | `src/drift_detection.py` | `01` |
-| 2 | Calibration (reliability diagram ; ECE en bonus ⭐) | `src/calibration.py` | `03` |
-| 3 | Analyse complète | `notebooks/M6-B1_template.ipynb` | `01`,`02`,`03` |
-| 4 | Diagnostic data vs concept drift | `diagnostic.md` | `02` |
-| 5 | Logique de remédiation | `src/recommendations.py` | `02`, `04` |
-| 6 | Note de recommandation | `note_recommandation_TEMPLATE.md` | `04` |
-| 7 | Extension dashboard Grafana (3 panels **live**) | `grafana/provisioning/dashboards/pyrenex_drift_TEMPLATE.json` | `05` |
-| 7⭐ | *(option)* publier le PSI à Prometheus sans nouveau service | `metrics/psi.prom` + compose + `prometheus.yml` | `05` |
+## Structure du dépôt
 
-## ⭐ Extension (non notée, si socle bouclé) — dater la dérive
+```text
+.
+├── data/
+│   ├── reference_set.csv              # Témoin de 1 500 dossiers
+│   ├── prod_3months.csv               # 3 000 dossiers de production
+│   └── predictions_log.csv            # Prédictions et labels réels
+├── notebooks/
+│   └── M6_B1_alex_franck_etienne.ipynb # Analyse et graphiques
+├── src/
+│   ├── drift_detection.py             # PSI, KS, Chi² et rapport
+│   ├── calibration.py                 # Table de calibration et ECE
+│   └── recommendations.py             # Orientation et remédiation
+├── tests/
+│   ├── test_smoke.py                  # Données, PSI et diagnostic
+│   └── test_calibration.py            # Calculs et validation des entrées
+├── grafana/provisioning/dashboards/
+│   └── pyrenex_drift_TEMPLATE.json    # Template de départ du monitoring M6-B2
+├── ressources/                        # Mini-cours et liens d'appui
+├── drift_summary.md                  # Résultats par variable
+├── diagnostic.md                     # Synthèse des quatre axes
+├── note_recommandation.md            # Décision proposée au client
+└── requirements.txt
+```
 
-Le PSI global compare 3 mois de prod d'un bloc : il **moyenne** la dérive.
-Recalculez le PSI **par fenêtres de 2 semaines** (colonne `timestamp` de
-`prod_3months.csv`) pour les 3 features les plus mouvantes, et tracez la
-courbe PSI × temps. Vous devez pouvoir répondre : **quand** la dérive
-a-t-elle commencé, feature par feature ? Est-elle **progressive ou
-brutale** — et qu'est-ce que ça change pour votre diagnostic (axe
-temporalité) et pour la fenêtre d'intervention recommandée à Sophie Léger ?
-Ajoutez la courbe à votre notebook et 3 lignes de lecture dans
-`note_recommandation.md`.
+## Auteurs
 
-## 📚 Ressources
-
-Voir [`./ressources/`](./ressources/) — 5 mini-cours + `liens_officiels.md`.
+Alexandre × Franck × Étienne.

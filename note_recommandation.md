@@ -1,11 +1,11 @@
-# Note de recommandation — Dérive `pyrenex_risk_v2` (À COMPLÉTER)
+# Note de recommandation — Dérive `pyrenex_risk_v2`
 
 **Pour :** Sophie Léger (Lead Data, Pyrenex)  **De :** FastIA — Alex-Frank-Etienne
 
 ## Constat (chiffré)
-Depuis mars 2026, les dossiers que reçoit le modèle ne sont plus les mêmes que ceux sur lesquels il a été entrapiné.
+Depuis mars 2026, les dossiers que reçoit le modèle ne sont plus les mêmes que ceux sur lesquels il a été entraîné.
 Le taux d'intérêt est la variable la plus touchée (de 12.6 % a 15.5%)
-Le modèle annonce de plus en plus de risque (7% en plus) alors que les défauts réellement constatés n'ont pas bougés.
+Le modèle annonce de plus en plus de risque (7% en plus) alors que les défauts réellement constatés n'ont pas bougé.
 La conséquence directe est que la part des dossiers que le modèle classe en défaut a augmenté de 38% a 62% en 12 semaines alors que le risque réel n'a pas bougé.
 Et le problème s'aggrave de jour en jour.
 
