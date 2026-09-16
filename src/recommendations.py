@@ -28,10 +28,12 @@ def diagnose_drift_type(d: DriftDiagnosis) -> str:
     Le verdict final se construit en croisant features, AUC, calibration et
     temporalité — et doit énoncer ce qui manquerait pour trancher.
     """
-    # TODO 1 — traduire la matrice du mini-cours 02 :
-    #   features dérivent + AUC stable → ... ; features stables + AUC
-    #   dégradée → ... ; sinon → "mixte".
-    raise NotImplementedError
+    if d.n_features_drift > 0 and d.auc_stable:
+        return "data drift"
+    if d.n_features_drift == 0 and not d.auc_stable:
+        return "concept drift"
+    return "mixte"
+
 
 
 def recommend(d: DriftDiagnosis) -> dict[str, str]:
@@ -40,7 +42,25 @@ def recommend(d: DriftDiagnosis) -> dict[str, str]:
     Returns:
         dict avec les clés : action / justification / urgence / drift_type.
     """
-    # TODO 2 — décliner au moins 3 issues distinctes (surveiller / ajuster /
-    #   réentraîner), chacune avec une justification en langage métier.
-    #   C'est cette fonction qui alimente votre note de recommandation.
-    raise NotImplementedError
+    drift_type = diagnose_drift_type(d)
+
+    if not d.auc_stable:
+        action, urgence = "réentraîner en urgence", "haute"
+        justification = "Le modèle ne classe plus aussi bien les dossiers."
+    elif d.calibration_degraded:
+        action, urgence = "réentraîner sur données récentes", "moyenne"
+        justification = "Les pourcentages de risque annoncés ne sont plus fiables."
+    elif d.f1_drop > 0:
+        action, urgence = "ajuster le seuil de décision", "moyenne"
+        justification = "Les décisions dérapent, mais l'ordre des dossiers tient."
+    else:
+        action, urgence = "surveiller", "faible"
+        justification = "Les entrées ont bougé, sans effet mesuré sur les décisions."
+
+    return {
+        "action": action,
+        "justification": justification,
+        "urgence": urgence,
+        "drift_type": drift_type,
+    }
+
